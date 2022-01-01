@@ -19,40 +19,58 @@ function wait-for-right {
   if [[ $mode == $escape_char ]]; then
     read -rsn2 mode # read 2 more chars
   fi
+  ret_val=1
   case $mode in
     'q') echo QUITTING ; exit ;;
-    '[A') echo UP ;;
-    '[B') echo DN ;;
-    '[D') echo LEFT ;;
-    '[C') echo RIGHT ;;
-    *) >&2 echo 'ERR bad input'; return ;;
+    '[A') echo UP; ret_val=0 ;;
+    '[B') echo DN; ret_val=0 ;;
+    '[6') echo NEXT; ret_val=0 ;;
+    '[5') echo PREV; ret_val=0 ;;
+    '[D') echo LEFT; ret_val=0 ;;
+    '[C') echo RIGHT; ret_val=0 ;;
+    *) >&2 echo "ERR bad input: $mode" ;;
   esac
+  echo $ret_val
+  return $ret_val
 }
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-if ! pgrep obs; then
-  sleep 5s && obs &
-fi
 
-cd "$DIR"
+cd ~/gphoto-booth/
+pwd
 
 killall gphoto2
 gio mount -s gphoto2 || true
 gphoto2 --set-config viewfinder=0
-gphoto2 --stdout --capture-movie | ffmpeg -i - -vcodec rawvideo -pix_fmt yuv420p -threads 12 -f v4l2 /dev/video7 > /dev/null 2>&1 &
+gphoto2 --stdout --capture-movie | ffmpeg -i - -vcodec rawvideo -pix_fmt yuv420p -f v4l2 /dev/video7 > /dev/null 2>&1 &
 mkdir -p pics
 num="$(ls -al pics/booth_*.jpg | wc -l)"
 if [[ $num == "" ]]; then
   num=0
 fi
+
+if ! pgrep obs; then
+  export LIBGL_ALWAYS_SOFTWARE=1
+  sleep 5s && obs > /dev/null 2>&1 &
+  sleep 10s
+fi
+
+obs-cli --password asdf scenecollection set Booth
+
 while true; do
   ((num++))
   obs-cli --password asdf label text smile "SMILE!"
   obs-cli --password asdf sceneitem hide Webcam smile
   obs-cli --password asdf scene switch Webcam
-
-  wait-for-right
+  {
+    original_terminal_state="$(stty -g)"
+    stty -icanon -echo min 0 time 0
+    LC_ALL=C dd bs=1 > /dev/null 2>&1
+    stty "$original_terminal_state"
+  } < /dev/tty
+   until wait-for-right; do
+     echo "wrong key"
+   done
 
   obs-cli --password asdf sceneitem show Webcam smile
   killall gphoto2
@@ -75,6 +93,6 @@ while true; do
   cp $FILENAME /tmp/booth-preview.jpg
   obs-cli --password asdf scene switch image
   gphoto2 --set-config viewfinder=0
-  gphoto2 --stdout --capture-movie | ffmpeg -i - -vcodec rawvideo -pix_fmt yuv420p -threads 12 -f v4l2 /dev/video7 > /dev/null 2>&1 &
+  gphoto2 --stdout --capture-movie | ffmpeg -i - -vcodec rawvideo -pix_fmt yuv420p -f v4l2 /dev/video7 > /dev/null 2>&1 &
   countdown
 done
